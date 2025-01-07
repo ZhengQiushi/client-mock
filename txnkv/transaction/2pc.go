@@ -811,7 +811,7 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *retry.Backoffer, action twoP
 
 	// This is redundant since `doActionOnGroupMutations` will still split groups into batches and
 	// check the number of batches. However we don't want the check fail after any code changes.
-	c.checkOnePCFallBack(action, len(groups))
+	c.checkOnePCFallBack(bo, action, len(groups))
 
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
@@ -819,6 +819,26 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *retry.Backoffer, action twoP
 type groupedMutations struct {
 	region    locate.RegionVerID
 	mutations CommitterMutations
+}
+
+// 新增函数：检查所有Region是否在同一个Store上
+func (c *twoPhaseCommitter) isAllRegionsInSameStore(bo *retry.Backoffer) bool {
+	if len(c.regionTxnSize) <= 1 {
+		return true
+	}
+	storeID := uint64(0)
+	for regionID := range c.regionTxnSize {
+		loc, err := c.store.GetRegionCache().LocateRegionByID(bo, regionID)
+		if err != nil {
+			return false
+		}
+		if storeID == 0 {
+			storeID = loc.StoreID
+		} else if storeID != loc.StoreID {
+			return false
+		}
+	}
+	return true
 }
 
 // groupSortedMutationsByRegion separates keys into groups by their belonging Regions.
@@ -964,7 +984,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *retry.Backoffer, action
 	_, actionIsPessimisticLock := action.(actionPessimisticLock)
 	_, actionIsPrewrite := action.(actionPrewrite)
 
-	c.checkOnePCFallBack(action, len(batchBuilder.allBatches()))
+	c.checkOnePCFallBack(bo, action, len(batchBuilder.allBatches()))
 
 	var err error
 	if val, err := util.EvalFailpoint("skipKeyReturnOK"); err == nil {
@@ -1574,8 +1594,12 @@ func (c *twoPhaseCommitter) setOnePC(val bool) {
 	}
 }
 
-func (c *twoPhaseCommitter) checkOnePCFallBack(action twoPhaseCommitAction, batchCount int) {
+func (c *twoPhaseCommitter) checkOnePCFallBack(bo *retry.Backoffer, action twoPhaseCommitAction, batchCount int) {
 	if _, ok := action.(actionPrewrite); ok {
+		if c.isAllRegionsInSameStore(bo) {
+			// 全在一个StoreID上
+			return
+		}
 		if batchCount > 1 {
 			c.setOnePC(false)
 		}

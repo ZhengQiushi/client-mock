@@ -387,15 +387,33 @@ func (action actionPrewrite) handleSingleBatch(
 					c.setOnePC(false)
 					c.setAsyncCommit(false)
 				} else {
-					// For 1PC, there's no racing to access `onePCCommitTS` so it's safe
-					// not to lock the mutex.
-					if c.onePCCommitTS != 0 {
-						logutil.Logger(bo.GetCtx()).Fatal(
-							"one pc happened multiple times",
+					// // For 1PC, there's no racing to access `onePCCommitTS` so it's safe
+					// // not to lock the mutex.
+					// if c.onePCCommitTS != 0 {
+					// 	logutil.Logger(bo.GetCtx()).Fatal(
+					// 		"one pc happened multiple times",
+					// 		zap.Uint64("startTS", c.startTS),
+					// 	)
+					// }
+					// c.onePCCommitTS = prewriteResp.OnePcCommitTs
+
+					// For 1PC, check if the OnePcCommitTs is consistent across multiple regions.
+					if c.onePCCommitTS == 0 {
+						// First time receiving OnePcCommitTs, record it.
+						c.onePCCommitTS = prewriteResp.OnePcCommitTs
+					} else if c.onePCCommitTS != prewriteResp.OnePcCommitTs {
+						// If OnePcCommitTs is inconsistent, fallback to 2PC.
+						logutil.Logger(bo.GetCtx()).Warn(
+							"1pc failed due to inconsistent OnePcCommitTs, fallback to normal commit procedure",
 							zap.Uint64("startTS", c.startTS),
+							zap.Uint64("existingOnePcCommitTs", c.onePCCommitTS),
+							zap.Uint64("newOnePcCommitTs", prewriteResp.OnePcCommitTs),
 						)
+						// metrics.OnePCTxnCounterFallback.Inc()
+						// c.setOnePC(false)
+						// c.setAsyncCommit(false)
+						return nil
 					}
-					c.onePCCommitTS = prewriteResp.OnePcCommitTs
 				}
 				return nil
 			} else if prewriteResp.OnePcCommitTs != 0 {

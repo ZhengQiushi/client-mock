@@ -1095,6 +1095,7 @@ type KeyLocation struct {
 	StartKey []byte
 	EndKey   []byte
 	Buckets  *metapb.Buckets
+	StoreID  uint64
 }
 
 // Contains checks if key is in [StartKey, EndKey).
@@ -1209,6 +1210,7 @@ func (c *RegionCache) LocateKeyRange(bo *retry.Backoffer, startKey, endKey []byt
 				StartKey: r.StartKey(),
 				EndKey:   r.EndKey(),
 				Buckets:  r.getStore().buckets,
+				StoreID:  r.GetLeaderStoreID(),
 			})
 			if r.ContainsByEnd(endKey) {
 				return res, nil
@@ -1231,6 +1233,7 @@ func (c *RegionCache) LocateKeyRange(bo *retry.Backoffer, startKey, endKey []byt
 				StartKey: r.StartKey(),
 				EndKey:   r.EndKey(),
 				Buckets:  r.getStore().buckets,
+				StoreID:  r.GetLeaderStoreID(),
 			})
 		}
 		endRegion := batchRegions[len(batchRegions)-1]
@@ -1367,6 +1370,7 @@ func (m *batchLocateRangesMerger) appendKeyLocation(r *Region) {
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 		Buckets:  r.getStore().buckets,
+		StoreID:  r.GetLeaderStoreID(),
 	})
 }
 
@@ -1452,6 +1456,7 @@ func (c *RegionCache) LocateKey(bo *retry.Backoffer, key []byte) (*KeyLocation, 
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 		Buckets:  r.getStore().buckets,
+		StoreID:  r.GetLeaderStoreID(),
 	}, nil
 }
 
@@ -1466,6 +1471,7 @@ func (c *RegionCache) TryLocateKey(key []byte) *KeyLocation {
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 		Buckets:  r.getStore().buckets,
+		StoreID:  r.GetLeaderStoreID(),
 	}
 }
 
@@ -1481,6 +1487,7 @@ func (c *RegionCache) LocateEndKey(bo *retry.Backoffer, key []byte) (*KeyLocatio
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 		Buckets:  r.getStore().buckets,
+		StoreID:  r.GetLeaderStoreID(),
 	}, nil
 }
 
@@ -1684,6 +1691,7 @@ func (c *RegionCache) LocateRegionByID(bo *retry.Backoffer, regionID uint64) (*K
 			StartKey: r.StartKey(),
 			EndKey:   r.EndKey(),
 			Buckets:  r.getStore().buckets,
+			StoreID:  r.GetLeaderStoreID(),
 		}
 		return loc, nil
 	}
@@ -1702,6 +1710,7 @@ func (c *RegionCache) LocateRegionByID(bo *retry.Backoffer, regionID uint64) (*K
 		StartKey: r.StartKey(),
 		EndKey:   r.EndKey(),
 		Buckets:  r.getStore().buckets,
+		StoreID:  r.GetLeaderStoreID(),
 	}, nil
 }
 
