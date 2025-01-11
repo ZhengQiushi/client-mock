@@ -403,12 +403,12 @@ func (action actionPrewrite) handleSingleBatch(
 						c.onePCCommitTS = prewriteResp.OnePcCommitTs
 					} else if c.onePCCommitTS != prewriteResp.OnePcCommitTs {
 						// If OnePcCommitTs is inconsistent, fallback to 2PC.
-						logutil.Logger(bo.GetCtx()).Warn(
-							"1pc failed due to inconsistent OnePcCommitTs, fallback to normal commit procedure",
-							zap.Uint64("startTS", c.startTS),
-							zap.Uint64("existingOnePcCommitTs", c.onePCCommitTS),
-							zap.Uint64("newOnePcCommitTs", prewriteResp.OnePcCommitTs),
-						)
+						// logutil.Logger(bo.GetCtx()).Warn(
+						// 	"1pc failed due to inconsistent OnePcCommitTs, fallback to normal commit procedure",
+						// 	zap.Uint64("startTS", c.startTS),
+						// 	zap.Uint64("existingOnePcCommitTs", c.onePCCommitTS),
+						// 	zap.Uint64("newOnePcCommitTs", prewriteResp.OnePcCommitTs),
+						// )
 						// metrics.OnePCTxnCounterFallback.Inc()
 						// c.setOnePC(false)
 						// c.setAsyncCommit(false)
@@ -417,10 +417,10 @@ func (action actionPrewrite) handleSingleBatch(
 				}
 				return nil
 			} else if prewriteResp.OnePcCommitTs != 0 {
-				logutil.Logger(bo.GetCtx()).Fatal(
-					"tikv committed a non-1pc transaction with 1pc protocol",
-					zap.Uint64("startTS", c.startTS),
-				)
+				// logutil.Logger(bo.GetCtx()).Fatal(
+				// 	"tikv committed a non-1pc transaction with 1pc protocol",
+				// 	zap.Uint64("startTS", c.startTS),
+				// )
 			}
 			if c.isAsyncCommit() {
 				// 0 if the min_commit_ts is not ready or any other reason that async

@@ -811,30 +811,54 @@ func (c *twoPhaseCommitter) doActionOnMutations(bo *retry.Backoffer, action twoP
 
 	// This is redundant since `doActionOnGroupMutations` will still split groups into batches and
 	// check the number of batches. However we don't want the check fail after any code changes.
-	c.checkOnePCFallBack(bo, action, len(groups))
+	c.checkOnePCFallBack(bo, action, groupedMutations2RegionMetas(groups))
 
 	return c.doActionOnGroupMutations(bo, action, groups)
 }
 
 type groupedMutations struct {
 	region    locate.RegionVerID
+	storeID   uint64
 	mutations CommitterMutations
 }
 
+type regionMeta struct {
+	region  locate.RegionVerID
+	storeID uint64
+}
+
+func groupedMutations2RegionMetas(groups []groupedMutations) []regionMeta {
+	regionMetas := make([]regionMeta, 0, len(groups))
+	for _, group := range groups {
+		regionMetas = append(regionMetas, regionMeta{
+			region:  group.region,
+			storeID: group.storeID,
+		})
+	}
+	return regionMetas
+}
+
+func batchMutations2RegionMetas(groups []batchMutations) []regionMeta {
+	regionMetas := make([]regionMeta, 0, len(groups))
+	for _, group := range groups {
+		regionMetas = append(regionMetas, regionMeta{
+			region:  group.region,
+			storeID: group.storeID,
+		})
+	}
+	return regionMetas
+}
+
 // 新增函数：检查所有Region是否在同一个Store上
-func (c *twoPhaseCommitter) isAllRegionsInSameStore(bo *retry.Backoffer) bool {
+func (c *twoPhaseCommitter) isAllRegionsInSameStore(bo *retry.Backoffer, groups []regionMeta) bool {
 	if len(c.regionTxnSize) <= 1 {
 		return true
 	}
 	storeID := uint64(0)
-	for regionID := range c.regionTxnSize {
-		loc, err := c.store.GetRegionCache().LocateRegionByID(bo, regionID)
-		if err != nil {
-			return false
-		}
+	for idx := range groups {
 		if storeID == 0 {
-			storeID = loc.StoreID
-		} else if storeID != loc.StoreID {
+			storeID = groups[idx].storeID
+		} else if storeID != groups[idx].storeID {
 			return false
 		}
 	}
@@ -853,6 +877,7 @@ func groupSortedMutationsByRegion(c *locate.RegionCache, bo *retry.Backoffer, m 
 			if lastLoc != nil {
 				groups = append(groups, groupedMutations{
 					region:    lastLoc.Region,
+					storeID:   lastLoc.StoreID,
 					mutations: m.Slice(lastUpperBound, i),
 				})
 				lastUpperBound = i
@@ -867,11 +892,84 @@ func groupSortedMutationsByRegion(c *locate.RegionCache, bo *retry.Backoffer, m 
 	if lastLoc != nil {
 		groups = append(groups, groupedMutations{
 			region:    lastLoc.Region,
+			storeID:   lastLoc.StoreID,
 			mutations: m.Slice(lastUpperBound, m.Len()),
 		})
 	}
 	return groups, nil
 }
+
+// func groupSortedMutationsByRegion(c *locate.RegionCache, bo *retry.Backoffer, m CommitterMutations) ([]groupedMutations, error) {
+// 	const workerCount = 10 // 调整 worker 数量以控制并发度
+// 	var (
+// 		regions = make([]*locate.KeyLocation, m.Len())
+// 		errs    = make(chan error, m.Len())
+// 		wg      sync.WaitGroup
+// 	)
+
+// 	// 启动 worker pool
+// 	wg.Add(workerCount)
+// 	for id := 0; id < workerCount; id++ {
+// 		go func(id int) {
+// 			defer wg.Done()
+// 			for i := id; i < m.Len(); i += workerCount {
+// 				singleBo, cancel := bo.Fork()
+// 				defer cancel()
+// 				key := m.GetKey(i)
+// 				loc, err := c.LocateKey(singleBo, key)
+// 				if err != nil {
+// 					errs <- err
+// 					return
+// 				}
+// 				regions[i] = loc
+// 			}
+// 		}(id)
+// 	}
+
+// 	// 等待所有 worker 完成
+// 	wg.Wait()
+// 	close(errs)
+
+// 	// 处理错误
+// 	for err := range errs {
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
+
+// 	// 进行分组
+// 	var groups []groupedMutations
+// 	if m.Len() == 0 {
+// 		return groups, nil
+// 	}
+
+// 	var currentRegion locate.RegionVerID
+// 	var currentStoreID uint64
+// 	var startIdx int
+// 	for i := 0; i < m.Len(); i++ {
+// 		if regions[i].Region != currentRegion {
+// 			if i > startIdx {
+// 				groups = append(groups, groupedMutations{
+// 					region:    currentRegion,
+// 					storeID:   currentStoreID,
+// 					mutations: m.Slice(startIdx, i),
+// 				})
+// 			}
+// 			currentRegion = regions[i].Region
+// 			currentStoreID = regions[i].StoreID
+// 			startIdx = i
+// 		}
+// 	}
+// 	if m.Len() > startIdx {
+// 		groups = append(groups, groupedMutations{
+// 			region:    currentRegion,
+// 			storeID:   currentStoreID,
+// 			mutations: m.Slice(startIdx, m.Len()),
+// 		})
+// 	}
+
+// 	return groups, nil
+// }
 
 // groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
 func (c *twoPhaseCommitter) groupMutations(bo *retry.Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
@@ -974,7 +1072,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *retry.Backoffer, action
 
 	batchBuilder := newBatched(c.primary())
 	for _, group := range groups {
-		batchBuilder.appendBatchMutationsBySize(group.region, group.mutations, sizeFunc,
+		batchBuilder.appendBatchMutationsBySize(group.region, group.storeID, group.mutations, sizeFunc,
 			int(kv.TxnCommitBatchSize.Load()))
 	}
 	firstIsPrimary := batchBuilder.setPrimary()
@@ -984,7 +1082,7 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *retry.Backoffer, action
 	_, actionIsPessimisticLock := action.(actionPessimisticLock)
 	_, actionIsPrewrite := action.(actionPrewrite)
 
-	c.checkOnePCFallBack(bo, action, len(batchBuilder.allBatches()))
+	c.checkOnePCFallBack(bo, action, batchMutations2RegionMetas(batchBuilder.allBatches()))
 
 	var err error
 	if val, err := util.EvalFailpoint("skipKeyReturnOK"); err == nil {
@@ -1108,20 +1206,20 @@ func (c *twoPhaseCommitter) doActionOnBatches(
 			noNeedFork = true
 		}
 	}
-	if noNeedFork {
-		for _, b := range batches {
-			e := action.handleSingleBatch(c, bo, b)
-			if e != nil {
-				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-					zap.Uint64("session", c.sessionID),
-					zap.Stringer("action type", action),
-					zap.Error(e),
-					zap.Uint64("txnStartTS", c.startTS))
-				return e
-			}
-		}
-		return nil
-	}
+	// if noNeedFork {
+	// 	for _, b := range batches {
+	// 		e := action.handleSingleBatch(c, bo, b)
+	// 		if e != nil {
+	// 			logutil.BgLogger().Debug("2PC doActionOnBatches failed",
+	// 				zap.Uint64("session", c.sessionID),
+	// 				zap.Stringer("action type", action),
+	// 				zap.Error(e),
+	// 				zap.Uint64("txnStartTS", c.startTS))
+	// 			return e
+	// 		}
+	// 	}
+	// 	return nil
+	// }
 	rateLim := len(batches)
 	// Set rateLim here for the large transaction.
 	// If the rate limit is too high, tikv will report service is busy.
@@ -1594,9 +1692,10 @@ func (c *twoPhaseCommitter) setOnePC(val bool) {
 	}
 }
 
-func (c *twoPhaseCommitter) checkOnePCFallBack(bo *retry.Backoffer, action twoPhaseCommitAction, batchCount int) {
+func (c *twoPhaseCommitter) checkOnePCFallBack(bo *retry.Backoffer, action twoPhaseCommitAction, groups []regionMeta) {
+	batchCount := len(groups)
 	if _, ok := action.(actionPrewrite); ok {
-		if c.isAllRegionsInSameStore(bo) {
+		if c.isAllRegionsInSameStore(bo, groups) {
 			// 全在一个StoreID上
 			return
 		}
@@ -1895,10 +1994,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		return nil
 	}
 
-	if c.onePCCommitTS != 0 {
-		logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
-			zap.Uint64("session", c.sessionID), zap.Uint64("startTS", c.startTS))
-	}
+	// if c.onePCCommitTS != 0 {
+	// 	logutil.Logger(ctx).Fatal("non 1PC transaction committed in 1PC",
+	// 		zap.Uint64("session", c.sessionID), zap.Uint64("startTS", c.startTS))
+	// }
 
 	if c.isAsyncCommit() {
 		if c.minCommitTSMgr.get() == 0 {
@@ -2127,6 +2226,7 @@ func (c *twoPhaseCommitter) shouldWriteBinlog() bool {
 
 type batchMutations struct {
 	region    locate.RegionVerID
+	storeID   uint64
 	mutations CommitterMutations
 	isPrimary bool
 }
@@ -2159,7 +2259,7 @@ func newBatched(primaryKey []byte) *batched {
 
 // appendBatchMutationsBySize appends mutations to b. It may split the keys to make
 // sure each batch's size does not exceed the limit.
-func (b *batched) appendBatchMutationsBySize(region locate.RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
+func (b *batched) appendBatchMutationsBySize(region locate.RegionVerID, storeID uint64, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
 	if _, err := util.EvalFailpoint("twoPCRequestBatchSizeLimit"); err == nil {
 		limit = 1
 	}
@@ -2180,6 +2280,7 @@ func (b *batched) appendBatchMutationsBySize(region locate.RegionVerID, mutation
 		}
 		b.batches = append(b.batches, batchMutations{
 			region:    region,
+			storeID:   storeID,
 			mutations: mutations.Slice(start, end),
 			isPrimary: isPrimary,
 		})

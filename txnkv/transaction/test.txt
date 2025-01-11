@@ -1,0 +1,23 @@
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set merge-schedule-limit 0
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set max-merge-region-keys 0
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set max-merge-region-size 0
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set split-merge-interval 0h0m0s
+
+
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set enable-placement-rulmerge-regiones false
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set enable-location-replacement false
+
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 operator show
+
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set enable-tikv-split-region false
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 scheduler show
+
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 scheduler remove balance-hot-region-scheduler
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 scheduler remove evict-slow-store-scheduler
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 scheduler remove balance-region-scheduler
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 scheduler remove balance-leader-scheduler
+
+
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set enable-placement-rules false
+tiup ctl:v8.5.0 pd -u http://10.77.70.117:2379 config set enable-location-replacement false
+
